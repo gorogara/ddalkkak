@@ -14,7 +14,7 @@ load_dotenv()
 
 # 페이지 설정
 st.set_page_config(
-    page_title="AI 보고서 자동화 도구",
+    page_title="보고서 딸깍",
     page_icon="📊",
     layout="wide"
 )
