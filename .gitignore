@@ -1,0 +1,40 @@
+# API Keys and Secrets
+.env
+*.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
+uploaded_files/
+temp/
+*.pdf
+*.log
+
+# Vector Database
+chroma_db/
+*.db
+*.sqlite
+
