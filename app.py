@@ -26,6 +26,8 @@ if 'reference_patterns' not in st.session_state:
     st.session_state.reference_patterns = {}
 if 'source_text' not in st.session_state:
     st.session_state.source_text = ""
+if 'source_files' not in st.session_state:
+    st.session_state.source_files = []
 if 'table_of_contents' not in st.session_state:
     st.session_state.table_of_contents = []
 if 'vector_db' not in st.session_state:
@@ -195,38 +197,88 @@ def main():
         
         # 소스 문서 업로드
         st.subheader("2. 소스 문서 (원본 콘텐츠)")
-        source_file = st.file_uploader(
-            "PDF 파일을 업로드하세요",
+        source_files = st.file_uploader(
+            "PDF 파일을 업로드하세요 (최대 3개)",
             type=['pdf'],
             key="source_uploader",
-            help="보고서에 포함할 원본 콘텐츠가 있는 PDF 파일"
+            help="보고서에 포함할 원본 콘텐츠가 있는 PDF 파일",
+            accept_multiple_files=True
         )
         
-        if source_file is not None:
+        # 파일 개수 검증
+        if source_files is not None and len(source_files) > 3:
+            st.error("⚠️ 최대 3개의 파일만 업로드할 수 있습니다.")
+            source_files = source_files[:3]  # 처음 3개만 사용
+        
+        # 업로드된 파일 목록 표시
+        if source_files is not None and len(source_files) > 0:
+            st.info(f"📁 {len(source_files)}/3 파일 업로드됨")
+            
+            # 파일 목록 표시
+            for idx, file in enumerate(source_files, 1):
+                # 파일 크기 계산 (bytes)
+                file_size = file.size if hasattr(file, 'size') else len(file.getvalue())
+                file_size_kb = file_size / 1024
+                file_size_mb = file_size_kb / 1024
+                if file_size_mb >= 1:
+                    size_str = f"{file_size_mb:.2f} MB"
+                else:
+                    size_str = f"{file_size_kb:.2f} KB"
+                st.write(f"  • **{file.name}** ({size_str})")
+        
+        if source_files is not None and len(source_files) > 0:
             if st.button("소스 문서 분석", key="analyze_source"):
                 with st.spinner("소스 문서를 분석하는 중..."):
-                    st.session_state.source_text = extract_text_from_pdf(source_file)
+                    all_texts = []
+                    all_chunks = []
+                    chunk_id_counter = 0
                     
-                    # 벡터 DB 초기화 및 문서 추가
+                    # 벡터 DB 초기화
                     if st.session_state.vector_db is None:
                         st.session_state.vector_db = VectorDBManager()
                         st.session_state.vector_db.get_or_create_collection()
                     
-                    # 텍스트를 청크로 나누어 벡터 DB에 추가
-                    chunk_size = 1000
-                    chunks = [
-                        st.session_state.source_text[i:i+chunk_size]
-                        for i in range(0, len(st.session_state.source_text), chunk_size)
-                    ]
+                    # 각 파일 처리
+                    for idx, source_file in enumerate(source_files, 1):
+                        file_text = extract_text_from_pdf(source_file)
+                        all_texts.append(file_text)
+                        
+                        # 텍스트를 청크로 나누어 벡터 DB에 추가
+                        chunk_size = 1000
+                        file_chunks = [
+                            file_text[i:i+chunk_size]
+                            for i in range(0, len(file_text), chunk_size)
+                        ]
+                        
+                        # 각 청크에 source_doc_N 접두사 추가
+                        chunk_ids = [
+                            f"source_doc_{idx}_chunk_{i}"
+                            for i in range(len(file_chunks))
+                        ]
+                        
+                        # 메타데이터에 파일명 포함
+                        metadatas = [
+                            {"source_file": f"source_doc_{idx}", "file_name": source_file.name}
+                            for _ in file_chunks
+                        ]
+                        
+                        st.session_state.vector_db.add_documents(
+                            texts=file_chunks,
+                            ids=chunk_ids,
+                            metadatas=metadatas
+                        )
+                        
+                        all_chunks.extend(file_chunks)
+                        chunk_id_counter += len(file_chunks)
                     
-                    st.session_state.vector_db.add_documents(
-                        texts=chunks,
-                        ids=[f"chunk_{i}" for i in range(len(chunks))]
-                    )
+                    # 모든 텍스트 결합
+                    st.session_state.source_text = "\n\n".join(all_texts)
+                    st.session_state.source_files = [f.name for f in source_files]
                     
                     st.success("✅ 소스 문서 분석 완료!")
-                    st.info(f"추출된 텍스트 길이: {len(st.session_state.source_text)} 문자")
-                    st.info(f"벡터 DB에 추가된 청크: {len(chunks)}개")
+                    st.info(f"업로드된 파일: {len(source_files)}개")
+                    st.info(f"추출된 텍스트 길이: {len(st.session_state.source_text):,} 문자")
+                    st.info(f"벡터 DB에 추가된 청크: {chunk_id_counter}개")
         
         st.divider()
         
@@ -235,6 +287,7 @@ def main():
             st.session_state.reference_text = ""
             st.session_state.reference_patterns = {}
             st.session_state.source_text = ""
+            st.session_state.source_files = []
             st.session_state.table_of_contents = []
             st.session_state.generated_report = ""
             st.session_state.technical_terms = []
@@ -276,7 +329,7 @@ def main():
         # 전제 조건 확인
         checks = {
             "참고 문서 업로드": bool(st.session_state.reference_text),
-            "소스 문서 업로드": bool(st.session_state.source_text),
+            "소스 문서 업로드": bool(st.session_state.source_text) and len(st.session_state.source_files) > 0,
             "목차 구성": len(st.session_state.table_of_contents) > 0,
             "벡터 DB 준비": st.session_state.vector_db is not None
         }
@@ -310,7 +363,7 @@ def main():
             # 보고서 생성 진행
             if progress['is_generating']:
                 is_complete = False
-                with st.spinner(f"보고서를 생성하는 중... ({progress['current_section_index']}/{progress['total_sections']} 섹션 완료)"):
+                with st.spinner(f"보고서를 생성하는 중... (목차가 많을 수록 오래 걸립니다.)"):
                     try:
                         # 보고서 생성 (재개 지원)
                         report, completed, is_complete = generate_full_report(

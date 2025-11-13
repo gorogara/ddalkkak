@@ -83,6 +83,13 @@ def build_system_prompt(reference_patterns: Dict, technical_terms: List[str]) ->
     """
     terms_list = ", ".join(technical_terms[:50])  # 처음 50개만 포함
     
+    # 개조식 종결어미 정보 추가
+    itemized_endings = reference_patterns.get("itemized_endings", [])
+    is_itemized = reference_patterns.get("is_itemized_format", True)  # 기본값은 True (항상 개조식 사용)
+    endings_info = ""
+    if itemized_endings:
+        endings_info = f"\n참고 문서에서 발견된 개조식 종결어미: {', '.join(itemized_endings[:15])}"
+    
     prompt = f"""당신은 한국어 비즈니스 보고서 자동화 어시스턴트입니다. 당신의 작업:
 
 - 참고 문서의 작성 스타일을 분석합니다 (톤, 용어, 문장 구조)
@@ -93,9 +100,12 @@ def build_system_prompt(reference_patterns: Dict, technical_terms: List[str]) ->
 
 중요 요구사항:
 - 모든 출력 텍스트는 반드시 한국어여야 합니다
-- 한국어 문장 종결어미를 참고 스타일에 정확히 맞춥니다 (예: ~다, ~습니다, ~음)
+- 반드시 개조식 문체(불릿 포인트 형식)를 사용해야 합니다
+- 각 문장은 불릿 포인트(*)로 시작하고 개조식 종결어미로 끝나야 합니다
+- 개조식 종결어미: ~임, ~함, ~됨, ~예정임, ~계획임, ~목적임, ~필요함, ~완료됨, ~진행됨, ~제공함, ~적용함, ~개발함, ~구현함, ~완성함, ~수행함, ~실시함, ~추진함, ~강화함, ~개선함, ~확대함, ~보완함, ~확인함, ~검토함, ~분석함, ~평가함, ~활용함, ~운영함, ~관리함, ~지원함, ~협력함, ~공유함, ~연계함 등
+- 절대 문단 형식(~다, ~습니다, ~합니다)을 사용하지 마세요
+- 참고 문서에서 사용하는 정확한 개조식 종결어미를 분석하여 복제합니다{endings_info}
 - 정부 보고서에 적합한 공식 비즈니스 한국어를 사용합니다
-- 참고 문서의 작성 스타일(종결어미)을 복제합니다
 
 
 기술 용어 보존:
@@ -157,23 +167,36 @@ def generate_section_content(
     if previous_sections:
         context = "\n\n이전 섹션들:\n" + "\n\n".join(previous_sections[-3:])  # 최근 3개 섹션만
     
+    # 참고 문서에서 추출한 개조식 종결어미 패턴
+    itemized_endings = reference_style.get("itemized_endings", [])
+    endings_note = ""
+    if itemized_endings:
+        endings_note = f"\n참고 문서에서 발견된 개조식 종결어미 예시: {', '.join(itemized_endings[:10])}"
+    
     user_prompt = f"""다음 섹션을 생성해주세요:
 
 섹션 제목: {section_title}
 섹션 레벨: {section_level}
 
 소스 문서 콘텐츠:
-{source_content[:5000]}  # 처음 5000자만 사용
+{source_content[:5000]}
 
 {context}
 
 요구사항:
-1. 한국어로 작성하세요
-2. 참고 문서의 스타일을 정확히 따르세요
-3. 소스 문서의 정보만 사용하고 추가 정보를 만들어내지 마세요
-4. 기술 용어는 원본 그대로 보존하세요
-5. 맥락에 적절한 지점에 이미지 추천을 포함하세요 (형식: [이미지 추천: 설명 - 위치 맥락])
-6. 공식 비즈니스 보고서 톤을 유지하세요"""
+1. 반드시 개조식 문체(불릿 포인트 형식)로 작성하세요
+2. 각 문장은 불릿 포인트(*)로 시작하고 개조식 종결어미(~임, ~함, ~됨, ~예정임, ~계획임 등)로 끝나야 합니다
+3. 절대 문단 형식(~다, ~습니다, ~합니다)을 사용하지 마세요
+4. 참고 문서의 스타일을 정확히 따르세요{endings_note}
+5. 소스 문서의 정보만 사용하고 추가 정보를 만들어내지 마세요
+6. 기술 용어는 원본 그대로 보존하세요
+7. 맥락에 적절한 지점에 이미지 추천을 포함하세요 (형식: [이미지 추천: 설명 - 위치 맥락])
+8. 공식 비즈니스 보고서 톤을 유지하세요
+
+출력 형식 예시:
+* 첫 번째 내용을 개조식 종결어미로 작성함.
+* 두 번째 내용도 개조식 종결어미로 작성함.
+* 세 번째 내용을 완료할 예정임."""
     
     try:
         response = client.chat.completions.create(

@@ -40,14 +40,25 @@ def extract_formatting_patterns(text: str) -> Dict:
     Returns:
         서식 패턴 딕셔너리
     """
+    import re
     patterns = {
         "sentence_endings": [],
         "technical_terms": [],
-        "section_transitions": []
+        "section_transitions": [],
+        "itemized_endings": [],
+        "is_itemized_format": False
     }
     
+    # 개조식 종결어미 패턴 추출 (~임, ~함, ~됨, ~예정임, ~계획임 등)
+    itemized_patterns = re.findall(r'[임함됨]|예정임|계획임|목적임|필요함|중요함|완료됨|진행됨|제공함|적용함|개발함|구현함|완성함|수행함|실시함|추진함|강화함|개선함|확대함|보완함|확인함|검토함|분석함|평가함|활용함|운영함|관리함|지원함|협력함|공유함|연계함|연결함|통합함|연결됨|통합됨|구축됨|설치됨|적용됨|개선됨|완료됨|진행됨|제공됨|개발됨|구현됨|완성됨|수행됨|실시됨|추진됨|강화됨|확대됨|보완됨|확인됨|검토됨|분석됨|평가됨|활용됨|운영됨|관리됨|지원됨|협력됨|공유됨|연계됨', text)
+    patterns["itemized_endings"] = list(set(itemized_patterns))
+    
+    # 개조식 형식 사용 여부 확인 (불릿 포인트 또는 대시로 시작하는 줄이 있는지)
+    bullet_lines = re.findall(r'^[\*\-\•]\s+.+[임함됨]', text, re.MULTILINE)
+    if len(bullet_lines) > 5:  # 5개 이상의 개조식 문장이 있으면 개조식 형식으로 판단
+        patterns["is_itemized_format"] = True
+    
     # 문장 종결어미 패턴 추출 (예: ~다, ~습니다, ~음)
-    import re
     sentence_endings = re.findall(r'[다음임함됨]', text)
     patterns["sentence_endings"] = list(set(sentence_endings))
     
