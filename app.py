@@ -48,6 +48,10 @@ if 'current_year' not in st.session_state:
     st.session_state.current_year = 2  # 기본값: 2차년도
 if 'total_years' not in st.session_state:
     st.session_state.total_years = 5  # 기본값: 5년 프로젝트
+if 'refinement_chat_history' not in st.session_state:
+    st.session_state.refinement_chat_history = []  # 채팅 히스토리
+if 'is_refining' not in st.session_state:
+    st.session_state.is_refining = False  # 수정 중 플래그
 
 
 def add_section(parent_number: str = "", level: int = 1):
@@ -575,6 +579,80 @@ def main():
                     file_name="generated_report.txt",
                     mime="text/plain"
                 )
+                
+                # 보고서 수정 인터페이스
+                st.divider()
+                st.subheader("💬 보고서 수정")
+                st.markdown("생성된 보고서를 수정하고 싶으시면 아래에 요청사항을 입력해주세요.")
+                st.markdown("**예시:** \"3번 섹션 더 자세히\", \"전문 용어 설명 추가\", \"1-1번 섹션 보완\"")
+                
+                # 채팅 히스토리 표시
+                if st.session_state.refinement_chat_history:
+                    st.markdown("### 💭 수정 이력")
+                    for i, chat_item in enumerate(st.session_state.refinement_chat_history):
+                        with st.expander(f"수정 요청 {i+1}: {chat_item['request'][:50]}..."):
+                            st.markdown(f"**요청:** {chat_item['request']}")
+                            st.markdown(f"**수정 시간:** {chat_item['timestamp']}")
+                
+                # 수정 요청 입력
+                modification_request = st.text_area(
+                    "수정 요청을 입력하세요",
+                    key="modification_request",
+                    placeholder="예: 3번 섹션을 더 자세히 작성해주세요",
+                    height=100
+                )
+                
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("🔧 수정 적용", type="primary", use_container_width=True):
+                        if modification_request.strip():
+                            from datetime import datetime
+                            st.session_state.is_refining = True
+                            st.session_state.refinement_chat_history.append({
+                                'request': modification_request,
+                                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                            st.rerun()
+                        else:
+                            st.warning("수정 요청을 입력해주세요.")
+                
+                with col2:
+                    if st.button("🔄 수정 초기화", help="수정 이력을 초기화합니다"):
+                        st.session_state.refinement_chat_history = []
+                        st.rerun()
+                
+                # 수정 처리
+                if st.session_state.is_refining and st.session_state.refinement_chat_history:
+                    latest_request = st.session_state.refinement_chat_history[-1]['request']
+                    
+                    with st.spinner("보고서를 수정하는 중..."):
+                        try:
+                            from utils.refinement import refine_report_with_request
+                            from utils.year_filter import detect_next_year_sections
+                            
+                            has_next_year, matching_sections = detect_next_year_sections(st.session_state.table_of_contents)
+                            
+                            refined_report = refine_report_with_request(
+                                current_report=st.session_state.generated_report,
+                                modification_request=latest_request,
+                                table_of_contents=st.session_state.table_of_contents,
+                                source_content=st.session_state.source_text,
+                                reference_style=st.session_state.reference_patterns,
+                                vector_db_manager=st.session_state.vector_db,
+                                technical_terms=st.session_state.technical_terms,
+                                current_year=st.session_state.current_year,
+                                has_next_year_section=has_next_year,
+                                matching_sections=matching_sections
+                            )
+                            
+                            st.session_state.generated_report = refined_report
+                            st.session_state.is_refining = False
+                            st.success("✅ 보고서 수정 완료!")
+                            st.rerun()
+                        except Exception as e:
+                            st.session_state.is_refining = False
+                            st.error(f"보고서 수정 중 오류 발생: {str(e)}")
+                            st.rerun()
 
 
 if __name__ == "__main__":
