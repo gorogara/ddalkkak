@@ -70,7 +70,14 @@ def extract_technical_terms(text: str) -> List[str]:
     return list(set(terms))
 
 
-def build_system_prompt(reference_patterns: Dict, technical_terms: List[str]) -> str:
+def build_system_prompt(
+    reference_patterns: Dict, 
+    technical_terms: List[str],
+    current_year: int = 2,
+    total_years: int = 5,
+    has_next_year_section: bool = False,
+    matching_sections: List[str] = None
+) -> str:
     """
     시스템 프롬프트를 생성합니다.
     
@@ -89,6 +96,74 @@ def build_system_prompt(reference_patterns: Dict, technical_terms: List[str]) ->
     endings_info = ""
     if itemized_endings:
         endings_info = f"\n참고 문서에서 발견된 개조식 종결어미: {', '.join(itemized_endings[:15])}"
+    
+    # 연도 필터링 정보 구성
+    if matching_sections is None:
+        matching_sections = []
+    
+    year_filtering_info = f"""
+연도 기반 콘텐츠 필터링 (엄격한 규칙):
+
+현재 보고서 연도: {current_year}차년도
+전체 프로젝트 기간: {total_years}차년도
+
+필터링 로직:
+1. 기본 포함:
+   - {current_year}차년도 콘텐츠만 포함
+   - 예: current_year = {current_year}이면 "{current_year}차년도" 콘텐츠만 포함
+
+2. 과거 연도:
+   - current_year 미만의 모든 연도 제외
+   - 예: current_year = {current_year}이면 "{current_year - 1}차년도" 이하 콘텐츠는 절대 포함하지 않음
+
+3. 다음 연도 (current_year + 1 = {current_year + 1}) - 조건부:
+   - 목차에 다음 연도 계획 섹션이 있는지 확인:
+     * "다음년도 수행계획"
+     * "차년도 계획"
+     * "내년 계획"
+     * "{current_year + 1}차년도 계획"
+   
+   - 목차에 다음 연도 계획 섹션이 있는 경우:
+     * {current_year + 1}차년도 콘텐츠는 해당 섹션에만 포함
+     * 다른 섹션에는 포함하지 않음
+   
+   - 목차에 다음 연도 계획 섹션이 없는 경우:
+     * {current_year + 1}차년도 콘텐츠를 완전히 제외
+
+4. 먼 미래 (current_year + 2 이상):
+   - 항상 제외
+   - 예: current_year = {current_year}이면 "{current_year + 2}차년도" 이상 콘텐츠는 절대 포함하지 않음
+
+결정 트리:
+콘텐츠가 연도 Y인가?
+│
+├─ Y < {current_year}? → ❌ 제외
+│
+├─ Y = {current_year}? → ✅ 포함
+│
+├─ Y = {current_year + 1}?
+│ │
+│ ├─ 목차에 "다음년도 계획" 섹션이 있는가?
+│ │ │
+│ │ ├─ 예 → ✅ 해당 섹션에만 포함
+│ │ └─ 아니오 → ❌ 완전히 제외
+│ │
+│ └─ 현재 섹션이 "다음년도 계획" 섹션인가?
+│ │
+│ ├─ 예 → ✅ 포함
+│ └─ 아니오 → ❌ 제외
+│
+└─ Y > {current_year + 1}? → ❌ 제외
+
+현재 상태:
+- 다음 연도 계획 섹션 존재: {'예' if has_next_year_section else '아니오'}
+{f'- 매칭 섹션: {", ".join(matching_sections)}' if matching_sections else ''}
+
+중요:
+- 소스 문서에서 "{current_year}차년도" 콘텐츠만 추출하여 사용
+- "{current_year - 1}차년도" 이하 콘텐츠는 절대 사용하지 않음
+- "{current_year + 1}차년도" 콘텐츠는 다음 연도 계획 섹션에만 사용
+- "{current_year + 2}차년도" 이상 콘텐츠는 절대 사용하지 않음"""
     
     prompt = f"""당신은 한국어 비즈니스 보고서 자동화 어시스턴트입니다. 당신의 작업:
 
@@ -125,7 +200,9 @@ def build_system_prompt(reference_patterns: Dict, technical_terms: List[str]) ->
 - 기술적 정확성을 유지합니다
 - 간결함보다 완전성과 품질을 우선시합니다
 - BLUEMAP 회사와 관련 없는 내용을 결과에 포함하지 않습니다.
-- 문서 콘텐츠의 품질과 양이 비용 절감보다 우선입니다"""
+- 문서 콘텐츠의 품질과 양이 비용 절감보다 우선입니다
+
+{year_filtering_info}"""
     
     return prompt
 
@@ -136,7 +213,10 @@ def generate_section_content(
     source_content: str,
     reference_style: Dict,
     previous_sections: List[str] = None,
-    technical_terms: List[str] = None
+    technical_terms: List[str] = None,
+    current_year: int = 2,
+    has_next_year_section: bool = False,
+    matching_sections: List[str] = None
 ) -> str:
     """
     보고서 섹션 콘텐츠를 생성합니다.
@@ -159,8 +239,18 @@ def generate_section_content(
     if technical_terms is None:
         technical_terms = []
     
+    if matching_sections is None:
+        matching_sections = []
+    
     # 시스템 프롬프트 생성
-    system_prompt = build_system_prompt(reference_style, technical_terms)
+    system_prompt = build_system_prompt(
+        reference_style, 
+        technical_terms,
+        current_year=current_year,
+        total_years=5,  # 기본값, 필요시 파라미터로 받을 수 있음
+        has_next_year_section=has_next_year_section,
+        matching_sections=matching_sections
+    )
     
     # 사용자 프롬프트 구성
     context = ""
@@ -223,7 +313,10 @@ def generate_full_report(
     vector_db_manager,
     technical_terms: List[str],
     start_index: int = 0,
-    existing_report: str = ""
+    existing_report: str = "",
+    current_year: int = 2,
+    has_next_year_section: bool = False,
+    matching_sections: List[str] = None
 ) -> tuple[str, int, bool]:
     """
     전체 보고서를 생성합니다. (진행 상황 추적 지원)
@@ -240,6 +333,9 @@ def generate_full_report(
     Returns:
         (생성된 보고서, 완료된 섹션 수, 완료 여부) 튜플
     """
+    if matching_sections is None:
+        matching_sections = []
+    
     full_report = []
     if existing_report:
         full_report.append(existing_report)
@@ -280,6 +376,14 @@ def generate_full_report(
         if similar_docs:
             relevant_content = "\n\n".join([doc['text'] for doc in similar_docs])
         
+        # 현재 섹션이 다음 연도 계획 섹션인지 확인
+        is_next_year_section = False
+        if matching_sections:
+            for matching_section in matching_sections:
+                if matching_section in section_title or section_title in matching_section:
+                    is_next_year_section = True
+                    break
+        
         # 섹션 생성
         section_content = generate_section_content(
             section_title=section_title,
@@ -287,7 +391,10 @@ def generate_full_report(
             source_content=relevant_content,
             reference_style=reference_style,
             previous_sections=previous_sections,
-            technical_terms=technical_terms
+            technical_terms=technical_terms,
+            current_year=current_year,
+            has_next_year_section=has_next_year_section,
+            matching_sections=matching_sections if is_next_year_section else []
         )
         
         # 섹션 헤더 추가

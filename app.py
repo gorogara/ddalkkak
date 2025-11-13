@@ -4,6 +4,7 @@ Streamlit 기반 보고서 생성 도구
 """
 import streamlit as st
 import os
+from typing import List, Dict
 from dotenv import load_dotenv
 from utils.pdf_parser import extract_text_from_pdf, extract_formatting_patterns, identify_section_structure
 from utils.vector_db import VectorDBManager
@@ -43,6 +44,10 @@ if 'report_generation_progress' not in st.session_state:
         'total_sections': 0,
         'is_generating': False
     }
+if 'current_year' not in st.session_state:
+    st.session_state.current_year = 2  # 기본값: 2차년도
+if 'total_years' not in st.session_state:
+    st.session_state.total_years = 5  # 기본값: 5년 프로젝트
 
 
 def add_section(parent_number: str = "", level: int = 1):
@@ -108,6 +113,105 @@ def delete_section(index: int):
         ]
 
 
+def sort_toc_by_hierarchy(table_of_contents: List[Dict]) -> List[Dict]:
+    """
+    목차를 계층 구조에 따라 정렬합니다.
+    
+    Args:
+        table_of_contents: 목차 리스트
+        
+    Returns:
+        계층 구조에 따라 정렬된 목차 리스트
+    """
+    if not table_of_contents:
+        return []
+    
+    # 번호를 숫자 리스트로 변환하여 정렬 (예: "1-2-3" -> [1, 2, 3])
+    def number_to_list(number_str: str) -> List[int]:
+        try:
+            return [int(x) for x in number_str.split('-')]
+        except:
+            return [0]
+    
+    # 정렬: 먼저 번호를 숫자 리스트로 변환하여 비교
+    sorted_toc = sorted(table_of_contents, key=lambda x: number_to_list(x.get('number', '0')))
+    
+    return sorted_toc
+
+
+def renumber_toc_by_hierarchy(table_of_contents: List[Dict]) -> List[Dict]:
+    """
+    목차를 계층 구조에 따라 재번호 매깁니다.
+    
+    Args:
+        table_of_contents: 목차 리스트
+        
+    Returns:
+        재번호가 매겨진 목차 리스트
+    """
+    if not table_of_contents:
+        return []
+    
+    # 계층 구조에 따라 정렬
+    sorted_toc = sort_toc_by_hierarchy(table_of_contents)
+    
+    # 재번호 매기기
+    renumbered = []
+    level1_counter = 0
+    level2_counters = {}  # {parent_number: counter}
+    level3_counters = {}  # {parent_number: counter} (레벨 2 번호를 키로 사용)
+    
+    for section in sorted_toc:
+        level = section.get('level', 1)
+        old_number = section.get('number', '')
+        
+        new_section = section.copy()
+        
+        if level == 1:
+            level1_counter += 1
+            new_number = str(level1_counter)
+            level2_counters[new_number] = 0
+        elif level == 2:
+            # 부모 번호 찾기: 가장 최근의 레벨 1 섹션
+            parent_number = None
+            for prev_section in reversed(renumbered):
+                if prev_section.get('level', 1) == 1:
+                    parent_number = prev_section.get('number', '')
+                    break
+            
+            if parent_number is None:
+                # 부모를 찾을 수 없으면 현재 레벨 1 카운터를 부모로 사용
+                parent_number = str(level1_counter)
+            
+            if parent_number not in level2_counters:
+                level2_counters[parent_number] = 0
+            
+            level2_counters[parent_number] += 1
+            new_number = f"{parent_number}-{level2_counters[parent_number]}"
+            level3_counters[new_number] = 0
+        elif level == 3:
+            # 부모 번호 찾기: 가장 최근의 레벨 2 섹션
+            parent_number = None
+            for prev_section in reversed(renumbered):
+                if prev_section.get('level', 1) == 2:
+                    parent_number = prev_section.get('number', '')
+                    break
+            
+            if parent_number is None:
+                # 부모를 찾을 수 없으면 레벨 2처럼 처리
+                new_number = old_number
+            else:
+                if parent_number not in level3_counters:
+                    level3_counters[parent_number] = 0
+                level3_counters[parent_number] += 1
+                new_number = f"{parent_number}-{level3_counters[parent_number]}"
+        
+        new_section['number'] = new_number
+        renumbered.append(new_section)
+    
+    return renumbered
+
+
 def render_toc_builder():
     """동적 목차 빌더 UI를 렌더링합니다."""
     st.subheader("📋 목차 구성")
@@ -123,12 +227,23 @@ def render_toc_builder():
         st.info("목차를 구성하려면 위의 '➕ 최상위 섹션 추가' 버튼을 클릭하세요.")
         return
     
-    # 레벨별로 그룹화하여 표시
-    level1_sections = [s for s in st.session_state.table_of_contents if s['level'] == 1]
+    # 계층 구조에 따라 정렬된 목차 가져오기
+    sorted_toc = sort_toc_by_hierarchy(st.session_state.table_of_contents)
     
-    for i, section in enumerate(st.session_state.table_of_contents):
+    # 원본 인덱스를 찾기 위한 매핑 생성
+    original_indices = {}
+    for idx, section in enumerate(st.session_state.table_of_contents):
+        # 고유 키 생성 (번호 + 레벨)
+        key = f"{section.get('number', '')}_{section.get('level', 1)}"
+        original_indices[key] = idx
+    
+    for sorted_idx, section in enumerate(sorted_toc):
         level = section['level']
         number = section['number']
+        
+        # 원본 인덱스 찾기
+        key = f"{number}_{level}"
+        original_idx = original_indices.get(key, sorted_idx)
         
         # 들여쓰기
         indent = "  " * (level - 1)
@@ -143,22 +258,25 @@ def render_toc_builder():
             new_title = st.text_input(
                 "제목",
                 value=section['title'],
-                key=f"title_{i}",
+                key=f"title_{original_idx}_{sorted_idx}",
                 label_visibility="collapsed",
                 placeholder="섹션 제목을 입력하세요"
             )
-            st.session_state.table_of_contents[i]['title'] = new_title
+            # 원본 목차 업데이트
+            if original_idx < len(st.session_state.table_of_contents):
+                st.session_state.table_of_contents[original_idx]['title'] = new_title
             
             # 하위 레벨 추가 버튼
             if level < 3:
                 button_label = f"➕ {number} 하위 섹션 추가"
-                if st.button(button_label, key=f"add_{i}"):
+                if st.button(button_label, key=f"add_{original_idx}_{sorted_idx}"):
                     add_section(parent_number=number, level=level + 1)
+                    st.rerun()
         
         with col3:
             # 삭제 버튼
-            if st.button("🗑️", key=f"delete_{i}", help="섹션 삭제"):
-                delete_section(i)
+            if st.button("🗑️", key=f"delete_{original_idx}_{sorted_idx}", help="섹션 삭제"):
+                delete_section(original_idx)
                 st.rerun()
         
         st.divider()
@@ -312,7 +430,43 @@ def main():
     with tab2:
         st.subheader("⚙️ 생성 설정")
         
+        # 연도 설정
+        st.markdown("### 📅 연도 설정")
+        col1, col2 = st.columns(2)
+        with col1:
+            current_year = st.number_input(
+                "현재 연도 (차년도)",
+                min_value=1,
+                max_value=10,
+                value=st.session_state.current_year,
+                help="예: 2차년도 보고서인 경우 2를 입력"
+            )
+            st.session_state.current_year = current_year
+        
+        with col2:
+            total_years = st.number_input(
+                "전체 프로젝트 기간 (차년도)",
+                min_value=1,
+                max_value=10,
+                value=st.session_state.total_years,
+                help="예: 5년 프로젝트인 경우 5를 입력"
+            )
+            st.session_state.total_years = total_years
+        
+        # 다음 연도 계획 섹션 감지
+        from utils.year_filter import detect_next_year_sections
+        has_next_year, matching_sections = detect_next_year_sections(st.session_state.table_of_contents)
+        
+        if has_next_year:
+            st.success(f"✅ 다음 연도 계획 섹션 감지됨: {', '.join(matching_sections)}")
+            st.info(f"📌 {current_year + 1}차년도 콘텐츠는 다음 연도 계획 섹션에만 포함됩니다.")
+        else:
+            st.info(f"ℹ️ 다음 연도 계획 섹션이 없습니다. {current_year}차년도 콘텐츠만 포함됩니다.")
+        
+        st.divider()
+        
         # 목차 검증
+        st.markdown("### 📋 목차 검증")
         if st.session_state.table_of_contents:
             st.info(f"현재 {len(st.session_state.table_of_contents)}개의 섹션이 구성되어 있습니다.")
             
@@ -365,6 +519,10 @@ def main():
                 is_complete = False
                 with st.spinner(f"보고서를 생성하는 중... (목차가 많을 수록 오래 걸립니다.)"):
                     try:
+                        # 다음 연도 계획 섹션 감지
+                        from utils.year_filter import detect_next_year_sections
+                        has_next_year, matching_sections = detect_next_year_sections(st.session_state.table_of_contents)
+                        
                         # 보고서 생성 (재개 지원)
                         report, completed, is_complete = generate_full_report(
                             table_of_contents=st.session_state.table_of_contents,
@@ -373,7 +531,10 @@ def main():
                             vector_db_manager=st.session_state.vector_db,
                             technical_terms=st.session_state.technical_terms,
                             start_index=progress['current_section_index'],
-                            existing_report=st.session_state.generated_report
+                            existing_report=st.session_state.generated_report,
+                            current_year=st.session_state.current_year,
+                            has_next_year_section=has_next_year,
+                            matching_sections=matching_sections
                         )
                         
                         st.session_state.generated_report = report
