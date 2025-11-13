@@ -97,6 +97,7 @@ def build_system_prompt(reference_patterns: Dict, technical_terms: List[str]) ->
 - 정부 보고서에 적합한 공식 비즈니스 한국어를 사용합니다
 - 참고 문서의 작성 스타일(종결어미)을 복제합니다
 
+
 기술 용어 보존:
 - 기술 약어를 절대 번역하지 마세요 (IHO, VTS, ECDIS, AIS, S-100, S-57 등)
 - 표준 식별자를 절대 번역하지 마세요 (S-100, ISO 19115 등)
@@ -113,6 +114,7 @@ def build_system_prompt(reference_patterns: Dict, technical_terms: List[str]) ->
 - 콘텐츠를 임의로 판단하여 생략하거나 수정하지 마세요
 - 기술적 정확성을 유지합니다
 - 간결함보다 완전성과 품질을 우선시합니다
+- BLUEMAP 회사와 관련 없는 내용을 결과에 포함하지 않습니다.
 - 문서 콘텐츠의 품질과 양이 비용 절감보다 우선입니다"""
     
     return prompt
