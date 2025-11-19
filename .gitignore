@@ -38,3 +38,4 @@ chroma_db/
 *.db
 *.sqlite
 
+echo ".env" >> .gitignore
